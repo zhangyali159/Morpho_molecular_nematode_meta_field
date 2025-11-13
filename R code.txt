@@ -1,0 +1,1780 @@
+#############################
+####Morphological traits comparable to molecular approaches for soil nematode community analysis: a meta-analysis and field experiment
+###R code
+#########################################################################################
+############################################################################################
+##table1
+setwd("E:/r/meta/otu-asv-97-99")
+zy <- read.csv("asv-otu-99-97.csv",header=TRUE,row.names = 1)
+mydata <-zy[,-c(1:16)] 
+library(psych)
+cor_with_p <- function(df, method = "pearson") {
+  vars <- colnames(df)
+  n <- length(vars)
+  r_mat <- matrix(NA, n, n, dimnames = list(vars, vars))
+  p_mat <- matrix(NA, n, n, dimnames = list(vars, vars))
+  
+  for (i in 1:n) {
+    for (j in i:n) {
+      test <- cor.test(df[[i]], df[[j]], method = method, use = "pairwise.complete.obs")
+      r_mat[i, j] <- r_mat[j, i] <- test$estimate
+      p_mat[i, j] <- p_mat[j, i] <- test$p.value
+    }
+  }
+  r_mat <- round(r_mat, 3)
+  p_mat <- signif(p_mat, 3)
+  list(r = r_mat, p = p_mat)
+}
+
+res <- cor_with_p(mydata)
+
+# 输出结果
+res$r
+res$p 
+
+
+##################################################################################
+##############################################################################
+###table 2 
+###my data
+setwd("E:/r/meta")
+zy<- read.csv("mydata_long.csv",header=TRUE,row.names = 1)
+
+library(dplyr)
+summary_data <- zy %>%
+  group_by(method) %>%
+  summarise(across(
+    c(genus_richness, ra_bacterivores, ra_fungivores, ra_herbivores,
+      ra_omnivores_predators, MI, EI, SI, shannon, simpson),
+    list(
+      mean = ~mean(.x, na.rm = TRUE),
+      se   = ~sd(.x, na.rm = TRUE) / sqrt(sum(!is.na(.x)))
+    ),
+    .names = "{.col}_{.fn}"
+  )) %>%
+  mutate(across(where(is.numeric), ~ sprintf("%.2f", .x)))
+
+print(summary_data)
+
+
+
+###linear mixed-effect models
+####
+library(nlme)
+mod1 <- lme(ra_fungivores ~method, data = zy,random=~1|block)
+summary(mod1)
+anova(mod1)
+
+
+####################################################################################
+###meta data
+#  Load required package ---
+library(metafor)
+
+# Set working directory
+setwd("E:/r/meta")
+
+# Read the abundance data
+data <- read.csv("abundance.csv", header = TRUE, row.names = 1)
+
+# Display column names
+names(data)
+
+#---------------------#
+# Bacterivores   #
+#---------------------#
+
+# Calculate effect size and sampling variance (log response ratio, ROM)
+dat <- escalc(measure = "ROM",  
+              m1i = bacterivores_mol, sd1i = b.sd_mol, n1i = nnn,  # treatment group
+              m2i = bacterivores_mor, sd2i = b_mor_sd, n2i = nnn,  # control group
+              data = data)
+
+dat
+
+# Combine calculated effect sizes with original data
+dat <- cbind(data, dat)
+
+# Multilevel random-effects meta-analysis model
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID, method = "REML", data = dat)
+
+forest(model)
+# Summarize model results
+summary(model)
+
+# Calculate standard errors
+dat$sei <- sqrt(dat$vi)
+
+# Egger's regression test for publication bias
+egger_model <- lm((yi / sei) ~ I(1 / sei), data = dat)
+summary(egger_model)
+
+# Extract variance components
+var_comp <- model$sigma2
+names(var_comp) <- c("between_study", "within_study")
+var_comp
+
+# Calculate mean sampling variance
+mean_vi <- mean(dat$vi, na.rm = TRUE)
+mean_vi
+
+# Calculate I² values
+I2_between <- var_comp["between_study"] / (sum(var_comp) + mean_vi)
+I2_within  <- var_comp["within_study"]  / (sum(var_comp) + mean_vi)
+I2_total   <- sum(var_comp) / (sum(var_comp) + mean_vi)
+
+# Display I² values as percentages
+cat("I² (between-study) =", round(I2_between * 100, 2), "%\n")
+cat("I² (within-study)  =", round(I2_within  * 100, 2), "%\n")
+cat("I² (total)         =", round(I2_total   * 100, 2), "%\n")
+
+summary(model)
+model_summary <- summary(model)
+
+# Extract the pooled effect size and confidence intervals
+merged_effect_ba <- data.frame(
+  yi    = model_summary$beta[1],
+  ci.lb = model_summary$ci.lb[1],
+  ci.ub = model_summary$ci.ub[1],
+  pval  = model_summary$pval[1],
+  study = "bacterivores"
+)
+merged_effect_ba
+
+
+#---------------------#
+# Fungivores    #
+#---------------------#
+
+dat <- escalc(measure = "ROM",
+              m1i = fungivores_mol, sd1i = f.sd_mol, n1i = nnn,
+              m2i = fungivores_mor, sd2i = f_mor_sd, n2i = nnn,
+              data = data)
+
+dat
+dat <- cbind(data, dat)
+
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID, method = "REML", data = dat)
+
+
+# Calculate standard errors
+dat$sei <- sqrt(dat$vi)
+
+# Egger's regression test
+egger_model <- lm((yi / sei) ~ I(1 / sei), data = dat)
+summary(egger_model)
+
+# Extract variance components and calculate I²
+var_comp <- model$sigma2
+names(var_comp) <- c("between_study", "within_study")
+var_comp
+
+mean_vi <- mean(dat$vi, na.rm = TRUE)
+mean_vi
+
+I2_between <- var_comp["between_study"] / (sum(var_comp) + mean_vi)
+I2_within  <- var_comp["within_study"]  / (sum(var_comp) + mean_vi)
+I2_total   <- sum(var_comp) / (sum(var_comp) + mean_vi)
+
+cat("I² (between-study) =", round(I2_between * 100, 2), "%\n")
+cat("I² (within-study)  =", round(I2_within  * 100, 2), "%\n")
+cat("I² (total)         =", round(I2_total   * 100, 2), "%\n")
+
+summary(model)
+model_summary <- summary(model)
+forest(model)
+
+merged_effect_fu <- data.frame(
+  yi    = model_summary$beta[1],
+  ci.lb = model_summary$ci.lb[1],
+  ci.ub = model_summary$ci.ub[1],
+  pval  = model_summary$pval[1],
+  study = "fungivores"
+)
+merged_effect_fu
+
+
+#---------------------#
+# Herbivores    #
+#---------------------#
+
+dat <- escalc(measure = "ROM",
+              m1i = herbivores_mol, sd1i = h.sd_mol, n1i = nnn,
+              m2i = herbivores_mor, sd2i = h_mor_sd, n2i = nnn,
+              data = data)
+dat <- cbind(data, dat)
+
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID, method = "REML", data = dat)
+
+dat$sei <- sqrt(dat$vi)
+egger_model <- lm((yi / sei) ~ I(1 / sei), data = dat)
+summary(egger_model)
+
+var_comp <- model$sigma2
+names(var_comp) <- c("between_study", "within_study")
+var_comp
+
+mean_vi <- mean(dat$vi, na.rm = TRUE)
+mean_vi
+
+I2_between <- var_comp["between_study"] / (sum(var_comp) + mean_vi)
+I2_within  <- var_comp["within_study"]  / (sum(var_comp) + mean_vi)
+I2_total   <- sum(var_comp) / (sum(var_comp) + mean_vi)
+
+cat("I² (between-study) =", round(I2_between * 100, 2), "%\n")
+cat("I² (within-study)  =", round(I2_within  * 100, 2), "%\n")
+cat("I² (total)         =", round(I2_total   * 100, 2), "%\n")
+
+summary(model)
+model_summary <- summary(model)
+forest(model)
+
+merged_effect_he <- data.frame(
+  yi    = model_summary$beta[1],
+  ci.lb = model_summary$ci.lb[1],
+  ci.ub = model_summary$ci.ub[1],
+  pval  = model_summary$pval[1],
+  study = "herbivores"
+)
+merged_effect_he
+
+
+#-------------------------------#
+# Omnivores-Predators   #
+#-------------------------------#
+
+dat <- escalc(measure = "ROM",
+              m1i = op_mol, sd1i = op.sd_mol, n1i = nnn,
+              m2i = op_mor, sd2i = op_mor_sd, n2i = nnn,
+              data = data)
+
+dat <- cbind(data, dat)
+
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID, method = "REML", data = dat)
+
+dat$sei <- sqrt(dat$vi)
+egger_model <- lm((yi / sei) ~ I(1 / sei), data = dat)
+summary(egger_model)
+
+var_comp <- model$sigma2
+names(var_comp) <- c("between_study", "within_study")
+var_comp
+
+mean_vi <- mean(dat$vi, na.rm = TRUE)
+mean_vi
+
+I2_between <- var_comp["between_study"] / (sum(var_comp) + mean_vi)
+I2_within  <- var_comp["within_study"]  / (sum(var_comp) + mean_vi)
+I2_total   <- sum(var_comp) / (sum(var_comp) + mean_vi)
+
+cat("I² (between-study) =", round(I2_between * 100, 2), "%\n")
+cat("I² (within-study)  =", round(I2_within  * 100, 2), "%\n")
+cat("I² (total)         =", round(I2_total   * 100, 2), "%\n")
+
+summary(model)
+model_summary <- summary(model)
+forest(model)
+
+merged_effect_op <- data.frame(
+  yi    = model_summary$beta[1],
+  ci.lb = model_summary$ci.lb[1],
+  ci.ub = model_summary$ci.ub[1],
+  pval  = model_summary$pval[1],
+  study = "omnivores_predators"
+)
+merged_effect_op
+
+#---------------------#
+# Genus richness   #
+#---------------------#
+
+setwd("E:/r/meta")
+data <- read.csv("diversity.csv", header = TRUE, row.names = 1)
+
+dat1 <- escalc(measure = "ROM",
+               m1i = richness_mol_genera, sd1i = richnes_mol_genera.sd, n1i = nnn,
+               m2i = richness_mor_genera, sd2i = richness_mor_genera.sd, n2i = nnn,
+               data = data)
+dat1
+
+# Remove missing values
+dat_clean <- dat1[complete.cases(dat1$yi, dat1$vi), ]
+
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID, method = "REML", data = dat_clean)
+
+dat_clean$sei <- sqrt(dat_clean$vi)
+egger_model <- lm((yi / sei) ~ I(1 / sei), data = dat_clean)
+summary(egger_model)
+
+
+summary(model)
+model_summary <- summary(model)
+forest(model)
+
+var_comp <- model$sigma2
+names(var_comp) <- c("between_study", "within_study")
+var_comp
+
+mean_vi <- mean(dat$vi, na.rm = TRUE)
+mean_vi
+
+I2_between <- var_comp["between_study"] / (sum(var_comp) + mean_vi)
+I2_within  <- var_comp["within_study"]  / (sum(var_comp) + mean_vi)
+I2_total   <- sum(var_comp) / (sum(var_comp) + mean_vi)
+
+cat("I² (between-study) =", round(I2_between * 100, 2), "%\n")
+cat("I² (within-study)  =", round(I2_within  * 100, 2), "%\n")
+cat("I² (total)         =", round(I2_total   * 100, 2), "%\n")
+
+merged_effect_richness <- data.frame(
+  yi    = model_summary$beta[1],
+  ci.lb = model_summary$ci.lb[1],
+  ci.ub = model_summary$ci.ub[1],
+  pval  = model_summary$pval[1],
+  study = "genus_richness"
+)
+merged_effect_richness
+
+
+#---------------------#
+# Shannon index  #
+#---------------------#
+
+dat2 <- escalc(measure = "ROM",  
+               m1i = mol_Shannon, sd1i = mol_Shannon.sd, n1i = nnn,  # treatment group
+               m2i = mor_Shannon, sd2i = mor_Shannon.sd, n2i = nnn,  # control group
+               data = data)
+
+dat2
+
+# Remove missing or invalid values
+dat_clean <- dat2[complete.cases(dat2$yi, dat2$vi) & dat2$vi > 0, ]
+
+# Check study and system counts
+table(dat_clean$studyID)
+table(dat_clean$system)
+
+# Multilevel random-effects model
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID, method = "REML", data = dat_clean)
+
+# Calculate standard errors
+dat_clean$sei <- sqrt(dat_clean$vi)
+
+# Egger's regression test
+egger_model <- lm((yi / sei) ~ I(1 / sei), data = dat_clean)
+summary(egger_model)
+
+# Model summary and forest plot
+summary(model)
+model_summary <- summary(model)
+forest(model)
+
+# Extract variance components and calculate I²
+var_comp <- model$sigma2
+names(var_comp) <- c("between_study", "within_study")
+var_comp
+
+mean_vi <- mean(dat$vi, na.rm = TRUE)
+mean_vi
+
+I2_between <- var_comp["between_study"] / (sum(var_comp) + mean_vi)
+I2_within  <- var_comp["within_study"]  / (sum(var_comp) + mean_vi)
+I2_total   <- sum(var_comp) / (sum(var_comp) + mean_vi)
+
+cat("I² (between-study) =", round(I2_between * 100, 2), "%\n")
+cat("I² (within-study)  =", round(I2_within  * 100, 2), "%\n")
+cat("I² (total)         =", round(I2_total   * 100, 2), "%\n")
+
+# Extract pooled effect size
+merged_effect_shannon <- data.frame(
+  yi    = model_summary$beta[1],
+  ci.lb = model_summary$ci.lb[1],
+  ci.ub = model_summary$ci.ub[1],
+  pval  = model_summary$pval[1],
+  study = "shannon"
+)
+merged_effect_shannon
+
+
+#---------------------#
+# MI (Maturity Index) #
+#---------------------#
+
+setwd("E:/r/meta")
+data <- read.csv("index.csv", header = TRUE, row.names = 1)
+
+names(data)
+
+dat <- escalc(measure = "ROM",  
+              m1i = MI_MOL, sd1i = MI_MOL.sd, n1i = nnn,
+              m2i = MI_MOR, sd2i = MI_MOR.sd, n2i = nnn,
+              data = data)
+dat
+
+# Remove missing values
+dat_clean <- dat[complete.cases(dat$yi, dat$vi), ]
+
+# Multilevel random-effects model
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID, method = "REML", data = dat_clean)
+
+# Calculate standard errors
+dat_clean$sei <- sqrt(dat_clean$vi)
+
+# Egger's regression test
+egger_model <- lm((yi / sei) ~ I(1 / sei), data = dat_clean)
+summary(egger_model)
+
+
+# Model summary and forest plot
+summary(model)
+model_summary <- summary(model)
+forest(model)
+# Extract variance components and calculate I²
+var_comp <- model$sigma2
+names(var_comp) <- c("between_study", "within_study")
+var_comp
+
+mean_vi <- mean(dat$vi, na.rm = TRUE)
+mean_vi
+
+I2_between <- var_comp["between_study"] / (sum(var_comp) + mean_vi)
+I2_within  <- var_comp["within_study"]  / (sum(var_comp) + mean_vi)
+I2_total   <- sum(var_comp) / (sum(var_comp) + mean_vi)
+
+cat("I² (between-study) =", round(I2_between * 100, 2), "%\n")
+cat("I² (within-study)  =", round(I2_within  * 100, 2), "%\n")
+cat("I² (total)         =", round(I2_total   * 100, 2), "%\n")
+
+# Extract pooled effect size
+merged_effect_mi <- data.frame(
+  yi    = model_summary$beta[1],
+  ci.lb = model_summary$ci.lb[1],
+  ci.ub = model_summary$ci.ub[1],
+  pval  = model_summary$pval[1],
+  study = "MI"
+)
+merged_effect_mi
+
+
+#---------------------#
+# EI (Enrichment Index)
+#---------------------#
+
+dat3 <- escalc(measure = "ROM",  
+               m1i = EI_MOL, sd1i = EI_MOL.sd, n1i = nnn,
+               m2i = EI_MOR, sd2i = EI_MOR.sd, n2i = nnn,
+               data = data)
+dat3
+
+# Remove missing values
+dat_clean <- dat3[complete.cases(dat3$yi, dat3$vi), ]
+
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID, method = "REML", data = dat_clean)
+
+# Calculate standard errors
+dat_clean$sei <- sqrt(dat_clean$vi)
+
+# Egger's regression test
+egger_model <- lm((yi / sei) ~ I(1 / sei), data = dat_clean)
+summary(egger_model)
+
+summary(model)
+model_summary <- summary(model)
+forest(model)
+
+# Extract variance components and calculate I²
+var_comp <- model$sigma2
+names(var_comp) <- c("between_study", "within_study")
+var_comp
+
+mean_vi <- mean(dat$vi, na.rm = TRUE)
+mean_vi
+
+I2_between <- var_comp["between_study"] / (sum(var_comp) + mean_vi)
+I2_within  <- var_comp["within_study"]  / (sum(var_comp) + mean_vi)
+I2_total   <- sum(var_comp) / (sum(var_comp) + mean_vi)
+
+cat("I² (between-study) =", round(I2_between * 100, 2), "%\n")
+cat("I² (within-study)  =", round(I2_within  * 100, 2), "%\n")
+cat("I² (total)         =", round(I2_total   * 100, 2), "%\n")
+
+
+
+# Extract pooled effect size
+merged_effect_ei <- data.frame(
+  yi    = model_summary$beta[1],
+  ci.lb = model_summary$ci.lb[1],
+  ci.ub = model_summary$ci.ub[1],
+  pval  = model_summary$pval[1],
+  study = "EI"
+)
+merged_effect_ei
+
+
+#---------------------#
+# SI (Structure Index)
+#---------------------#
+
+dat3 <- escalc(measure = "ROM",
+               m1i = SI_MOL, sd1i = SI_MOL.sd, n1i = nnn,
+               m2i = SI_MOR, sd2i = SI_MOR.sd, n2i = nnn,
+               data = data)
+dat3
+
+# Remove missing values
+dat_clean <- dat3[complete.cases(dat3$yi, dat3$vi), ]
+
+# Multilevel random-effects model
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID, method = "REML", data = dat_clean)
+
+# Calculate standard errors
+dat_clean$sei <- sqrt(dat_clean$vi)
+
+# Egger's regression test
+egger_model <- lm((yi / sei) ~ I(1 / sei), data = dat_clean)
+summary(egger_model)
+
+summary(model)
+model_summary <- summary(model)
+forest(model)
+
+# Extract variance components and calculate I²
+var_comp <- model$sigma2
+names(var_comp) <- c("between_study", "within_study")
+var_comp
+
+mean_vi <- mean(dat$vi, na.rm = TRUE)
+mean_vi
+
+I2_between <- var_comp["between_study"] / (sum(var_comp) + mean_vi)
+I2_within  <- var_comp["within_study"]  / (sum(var_comp) + mean_vi)
+I2_total   <- sum(var_comp) / (sum(var_comp) + mean_vi)
+
+cat("I² (between-study) =", round(I2_between * 100, 2), "%\n")
+cat("I² (within-study)  =", round(I2_within  * 100, 2), "%\n")
+cat("I² (total)         =", round(I2_total   * 100, 2), "%\n")
+
+# Extract pooled effect size
+merged_effect_si <- data.frame(
+  yi    = model_summary$beta[1],
+  ci.lb = model_summary$ci.lb[1],
+  ci.ub = model_summary$ci.ub[1],
+  pval  = model_summary$pval[1],
+  study = "SI"
+)
+merged_effect_si
+
+
+#---------------------------#
+# Combine and export results
+#---------------------------#
+
+alll <- rbind(
+  merged_effect_ba,
+  merged_effect_fu,
+  merged_effect_he,
+  merged_effect_op,
+  merged_effect_richness,
+  merged_effect_shannon,
+  merged_effect_mi,
+  merged_effect_ei,
+  merged_effect_si
+)
+
+# Display combined results
+alll
+
+# Export to CSV file
+write.csv(alll, "20250710_effect_sizes.csv")
+
+
+
+
+##################################################################################
+###################################################################################
+####fig.1
+###my data
+####cor#################################################################
+setwd("E:/r/meta")
+zy<- read.csv("mydata.csv",header=TRUE,row.names = 1)
+nema_ba<- ggplot(zy,aes(x=log(ra_bacterivores_mol),y=log(ra_ba_mor)))+ylim(3.25,4.5)+
+  geom_point(aes(),size=3)+ 
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.9,label.y = 0.98,
+               size=5,p.digits = 4,data=zy)+
+  labs(x="Log RA of bacterivores (%)",y="Log RA of bacterivores (%)")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"))
+nema_ba
+
+
+nema_fu<- ggplot(zy,aes(x=log(ra_fungivores_mol),y=log(ra_fu_mor)))+ylim(1.5,4.2)+
+  geom_point(aes(),size=3)+
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.9,label.y = 0.98,
+               size=5,p.digits = 4,data=zy)+
+  labs(x="Log RA of fungivores (%)",y="Log RA of fungivores (%)")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"))
+nema_fu
+
+
+nema_he<- ggplot(zy,aes(x=log(ra_herbivores_mol),y=log(ra_he_mor)))+ylim(2,4.2)+
+  geom_point(aes(),size=3)+ 
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.9,label.y = 0.98,
+               size=5,p.digits = 4,data=zy)+
+  labs(x="Log RA of herbivores (%)",y="Log RA of herbivores (%)")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"))
+nema_he
+
+
+
+nema_op<- ggplot(zy,aes(x=log(ra_omnivores_predators_mol),y=log(ra_op_mor)))+ylim(0.8,3.2)+
+  geom_point(aes(),size=3)+ 
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.9,label.y = 0.98,
+               size=5,p.digits = 2,data=zy)+
+  labs(x="Log RA of omnivores-predators (%)",y="Log RA of omnivores-
+       predators (%)")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"))
+nema_op
+
+
+genus_richenss<- ggplot(zy,aes(x=genus_richness,y=genus_richness_mor))+ylim(10,25)+
+  geom_point(aes(),size=3)+ 
+  #geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.9,label.y = 0.98,
+               size=5,p.digits = 2,data=zy)+
+  labs(x=" Genus richenss",y="Genus richenss")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"))
+genus_richenss
+
+
+shannon<- ggplot(zy,aes(x=shannon_mol,y=shannon_mor))+ylim(1.7,2.8)+
+  geom_point(aes(),size=3)+ 
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.9,label.y = 0.98,
+               size=5,p.digits = 3,data=zy)+
+  labs(x="Shannon index",y="Shannon index")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"))
+shannon
+
+
+evenness<- ggplot(zy,aes(x=Pielou_mol,y=Pielou_mor))+ylim(0.55,0.9)+
+  geom_point(aes(),size=3)+ 
+  #geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 2), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.9,label.y = 0.98,
+               size=5,p.digits = 2,data=zy)+
+  labs(x=" Evenness index",y="Evenness index")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"))
+evenness
+
+
+
+MI<- ggplot(zy,aes(x=MI_MOL,y=MI_MOR))+ylim(1.5,3)+
+  geom_point(aes(),size=3)+ 
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.9,label.y = 0.98,
+               size=5,p.digits = 4,data=zy)+
+  labs(x=" Maturity index ",y="Maturity index")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"))
+MI
+
+EI<- ggplot(zy,aes(x=EI_MOL,y=EI_MOR))+ylim(20,75)+
+  geom_point(aes(),size=3)+ 
+  #geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black",lty=5)+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.9,label.y = 0.98,
+               size=5,p.digits = 2,data=zy)+
+  labs(x=" Enrichment index",y="Enrichment index")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"))
+EI
+
+SI<- ggplot(zy,aes(x=SI_MOL,y=SI_MOR))+ylim(20,75)+
+  geom_point(aes(),size=3)+ 
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.9,label.y = 0.98,
+               size=5,p.digits = 4,data=zy)+
+  labs(x=" Structure index",y="Structure index")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"))
+SI
+
+
+mydata <- nema_ba+nema_fu+nema_he+nema_op+genus_richenss+
+  shannon+evenness+MI+EI+SI+plot_layout(nrow=4)#mantel_similarity+
+mydata
+
+
+topptx(mydata,width=12, height= 12,"E:/r/meta/fig/fig1-mydata_cor.pptx")
+
+# Set working directory
+setwd("E:/r/meta")
+
+# Load genus-level community data
+mol_community1 <- read.csv("mol_genus_mydata.csv", header = TRUE)  # Molecular-based dataset (HTS)
+mor_community1 <- read.csv("my_data_mor.csv", header = TRUE)       # Morphology-based dataset
+
+# Remove metadata columns (retain abundance data only)
+mol_community <- mol_community1[, -c(0:8)]
+mor_community <- mor_community1[, -c(0:9)]
+
+# Convert raw counts to relative abundances (%)
+# Note: Table 1 already represents relative abundances, but conversion is applied for consistency
+mol_community <- mol_community / rowSums(mol_community) * 100
+mor_community <- mor_community / rowSums(mor_community) * 100
+
+## ------------------------------------------------------------
+## Mantel test for community similarity
+## ------------------------------------------------------------
+
+# Compute Bray–Curtis dissimilarity matrices
+mol_dist <- vegdist(mol_community, method = "bray")  # Molecular community
+mor_dist <- vegdist(mor_community, method = "bray")  # Morphological community
+
+# Perform Mantel test (Pearson correlation, 999 permutations)
+mantel_result <- mantel(mol_dist, mor_dist, method = "pearson", permutations = 999)
+
+## ------------------------------------------------------------
+## Visualization of community similarity
+## ------------------------------------------------------------
+
+# Convert dissimilarity to similarity (1 - Bray–Curtis distance)
+mol_similarity <- 1 - as.matrix(mol_dist)
+mor_similarity <- 1 - as.matrix(mor_dist)
+
+# Combine similarity values into a data frame for plotting
+mantel_data_similarity <- data.frame(
+  Similarity_Mol = as.vector(mol_similarity),
+  Similarity_Mor = as.vector(mor_similarity)
+)
+
+# Plot molecular vs. morphological Bray–Curtis similarity
+mantel_similarity <- ggplot(mantel_data_similarity, aes(x = Similarity_Mol, y = Similarity_Mor)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", size = 1.2, formula = 'y ~ x') +
+  labs(
+    # title = paste("Mantel Test: r =", round(mantel_result$statistic, 3)),
+    x = "Bray–Curtis similarity (molecular)",
+    y = "Bray–Curtis similarity (morphological)"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold")
+  )
+
+# Display the plot
+print(mantel_similarity)
+
+# Export figure to PowerPoint
+topptx(mantel_similarity, width = 7.7, height = 3, "E:/r/meta/fig/mantel251109.pptx")
+
+
+
+########################################################################################
+#######################################################################################
+####fig.2
+setwd("E:/r/meta")
+
+# Read input data
+data <- read.csv("mydata_rr_t.csv", header = TRUE, row.names = 1)
+
+# Reshape data to long format
+rr <- melt(data[, c(1:11)], id = c("method"))
+
+# Calculate mean, SE, and CI for each variable within each method
+fg <- summarySE(rr, measurevar = "value", groupvars = c("method", "variable"))
+fg
+fg$method <- factor(fg$method, levels = c("MI", "HTS"), ordered = TRUE)
+
+# Plot (a): Response ratios
+a <- ggplot(fg, aes(x = value, y = variable, fill = method, shape = method)) + 
+  xlim(-1.1, 1.1) +
+  geom_errorbar(aes(xmin = value - ci, xmax = value + ci),
+                width = .3, size = 0.7, position = position_dodge(0.7)) +
+  geom_point(aes(colour = method), size = 4, position = position_dodge(0.7)) + 
+  scale_color_manual(values = c("#fbb01a", "#0070b8")) +
+  scale_fill_manual(values = c("#fbb01a", "#0070b8")) +
+  scale_shape_manual(values = c(21, 22)) + 
+  geom_vline(xintercept = 0, colour = "#333333", linetype = 2, size = 0.8) +
+  theme_test() +
+  ggtitle("(a) Response to tillage") +
+  xlab("Response ratio") +
+  ylab("") +
+  scale_y_discrete(
+    limits = c("SI", "EI", "MI", "Pielou", "shannon", "genus_richness",
+               "ra_omnivores_predators", "ra_herbivores", "ra_fungivores", "ra_bacterivores"),
+    labels = c("Structure index", "Enrichment index", "Maturity index", "Evenness index",
+               "Shannon index", "Genus richness",
+               "RA of omnivores-predators", "RA of herbivores",
+               "RA of fungivores", "RA of bacterivores")
+  ) +
+  # Alternating background shading for readability
+  geom_rect(aes(ymin = 1.5, ymax = 2.5, xmin = -Inf, xmax = Inf),
+            fill = '#333333', alpha = .005) +
+  geom_rect(aes(ymin = 3.5, ymax = 4.5, xmin = -Inf, xmax = Inf),
+            fill = '#333333', alpha = .005) +
+  geom_rect(aes(ymin = 5.5, ymax = 6.5, xmin = -Inf, xmax = Inf),
+            fill = '#333333', alpha = .005) +
+  geom_rect(aes(ymin = 7.5, ymax = 8.5, xmin = -Inf, xmax = Inf),
+            fill = '#333333', alpha = .005) +
+  geom_rect(aes(ymin = 9.5, ymax = 10.5, xmin = -Inf, xmax = Inf),
+            fill = '#333333', alpha = .005) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = rel(1.3)),
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.5), face = "bold", colour = "black"),
+    axis.title.x = element_text(size = rel(1.4)),
+    axis.title.y = element_text(size = rel(1.4)),
+    legend.position = "none",
+    text = element_text(face = "bold")
+  )
+
+a
+
+# Separate data by method for t-test
+mm <- subset(data, method == "MI")
+ss <- subset(data, method == "HTS")
+
+# Two-sided t-tests for RA of fungivores
+t.test(mm$ra_fungivores, alternative = "two.sided", mu = 0)
+t.test(ss$ra_fungivores, alternative = "two.sided", mu = 0)
+
+
+
+#########################################
+# Visualization of correlation coefficients
+#########################################
+
+setwd("E:/r/meta")
+fg <- read.csv("mydata_pc1.csv", header = TRUE, row.names = 1)
+fg$method <- factor(fg$method, levels = c("MI", "HTS"), ordered = TRUE)
+
+# Plot (b): Correlations with soil fertility
+b <- ggplot(fg, aes(x = Correlation.cor, y = variable, fill = method, shape = method)) + 
+  xlim(-1, 1) +
+  geom_errorbar(aes(xmin = CI_lower, xmax = CI_upper),
+                width = .3, size = 0.7, position = position_dodge(0.7)) +
+  geom_point(aes(colour = method), size = 4, position = position_dodge(0.7)) + 
+  scale_color_manual(values = c("#fbb01a", "#0070b8")) +
+  scale_fill_manual(values = c("#fbb01a", "#0070b8")) +
+  scale_shape_manual(values = c(21, 22)) + 
+  geom_vline(xintercept = 0, colour = "#333333", linetype = 2, size = 0.8) +
+  theme_test() +
+  ggtitle("(b) Correlation with soil fertility") +
+  xlab("Correlation coefficient") +
+  ylab(NULL) +
+  scale_y_discrete(
+    limits = c("SI", "EI", "MI", "Pielou", "shannon", "genus_richness",
+               "ra_op", "ra_he", "ra_fu", "ra_ba"),
+    labels = c("Structure index", "Enrichment index", "Maturity index",
+               "Evenness index", "Shannon index", "Genus richness",
+               "RA of omnivores-predators (%)", "RA of herbivores (%)",
+               "RA of fungivores (%)", "RA of bacterivores (%)")
+  ) +
+  geom_rect(aes(ymin = 1.5, ymax = 2.5, xmin = -Inf, xmax = Inf),
+            fill = '#333333', alpha = .005) +
+  geom_rect(aes(ymin = 3.5, ymax = 4.5, xmin = -Inf, xmax = Inf),
+            fill = '#333333', alpha = .005) +
+  geom_rect(aes(ymin = 5.5, ymax = 6.5, xmin = -Inf, xmax = Inf),
+            fill = '#333333', alpha = .005) +
+  geom_rect(aes(ymin = 7.5, ymax = 8.5, xmin = -Inf, xmax = Inf),
+            fill = '#333333', alpha = .005) +
+  geom_rect(aes(ymin = 9.5, ymax = 10.5, xmin = -Inf, xmax = Inf),
+            fill = '#333333', alpha = .005) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = rel(1.3)),
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.5), face = "bold", colour = "black"),
+    legend.position = "none",
+    axis.title.x = element_text(size = rel(1.4)),
+    axis.title.y = element_text(size = rel(1.4)),
+    text = element_text(face = "bold")
+  ) +
+  theme(axis.ticks.y = element_blank(), axis.text.y = element_blank())
+
+b
+
+
+#########################################
+#Combine plots and export
+#########################################
+
+pp_mydata <- a + b
+pp_mydata
+
+
+############################################################################################
+############################################################################################
+####metadata---fig.3
+####cor#################################################################
+setwd("E:/r/meta")
+zy<-read.csv("abundance.csv",header = T,row.names = 1)
+nema_ba<- ggplot(zy,aes(x=log(bacterivores_mol),y=log(bacterivores_mor)))+ylim(2,4.35)+
+  geom_point(aes(fill = systems,color = systems), size = 3, shape = 21)+
+  scale_fill_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  scale_color_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.1,label.y = 0.98,
+               size=5,p.digits = 3,data=zy)+
+  labs(x="Log RA of bacterivores (%)",y="Log RA of bacterivores (%)")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"),legend.position="none")
+nema_ba
+
+
+nema_fu<- ggplot(zy,aes(x=log(fungivores_mol),y=log(fungivores_mor)))+ylim(1.4,4.2)+
+  geom_point(aes(fill = systems,color = systems), size = 3, shape = 21)+
+  scale_fill_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  scale_color_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  #geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.1,label.y = 0.98,
+               size=5,p.digits = 2,data=zy)+
+  labs(x="Log RA of fungivores (%)",y="Log RA of fungivores (%)")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"),legend.position="none")
+nema_fu
+
+
+nema_he<- ggplot(zy,aes(x=log(herbivores_mol),y=log(herbivores_mor)))+#ylim(2,4.2)+
+  geom_point(aes(fill = systems,color = systems), size = 3, shape = 21)+
+  scale_fill_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  scale_color_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.1,label.y = 0.98,
+               size=5,p.digits = 4,data=zy)+
+  labs(x="Log RA of herbivores (%)",y="Log RA of herbivores (%)")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"),legend.position="none")
+nema_he
+
+
+
+nema_op<- ggplot(zy,aes(x=log(op_mol),y=log(op_mor)))+ylim(0.8,3.2)+
+  geom_point(aes(fill = systems,color = systems), size = 3, shape = 21)+
+  scale_fill_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  scale_color_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.1,label.y = 0.98,
+               size=5,p.digits = 2,data=zy)+
+  labs(x="Log RA of omnivores-predators (%)",y="Log RA of omnivores-
+       predators (%)")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"),legend.position="none")
+nema_op
+
+zy<-read.csv("index.csv",header = T,row.names = 1)
+genus_richenss<- ggplot(zy,aes(x=richness_mol_genera,y=richness_mor_genera))+#ylim(2.3,4)+
+  geom_point(aes(fill = systems,color = systems), size = 3, shape = 21)+
+  scale_fill_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  scale_color_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  #geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.1,label.y = 0.98,
+               size=5,p.digits = 2,data=zy)+
+  labs(x=" Genus richenss",y="Genus richenss")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"),legend.position="none")
+genus_richenss
+
+
+shannon<- ggplot(zy,aes(x=mol_Shannon,y=mor_Shannon))+#ylim(0.5,1.1)+
+  geom_point(aes(fill = systems,color = systems), size = 3, shape = 21)+
+  scale_fill_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  scale_color_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+ 
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.1,label.y = 0.98,
+               size=5,p.digits = 2,data=zy)+
+  labs(x="Shannon index",y="Shannon index")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"),legend.position="none")
+shannon
+
+
+zy<-read.csv("eisi.csv",header = T,row.names = 1)
+MI<- ggplot(zy,aes(x=MI_MOL,y=MI_MOR))+#ylim(0.5,1)+
+  geom_point(aes(fill = systems,color = systems), size = 3, shape = 21)+
+  scale_fill_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  scale_color_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.1,label.y = 0.98,
+               size=5,p.digits = 3,data=zy)+
+  labs(x=" Maturity index ",y="Maturity index")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"),legend.position="none")
+MI
+
+EI<- ggplot(zy,aes(x=log(EI_MOL),y=log(EI_MOR)))+#ylim(3.2,4.2)+
+  geom_point(aes(fill = systems,color = systems), size = 3, shape = 21)+
+  scale_fill_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  scale_color_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.1,label.y = 0.98,
+               size=5,p.digits = 2,data=zy)+
+  labs(x="Log enrichment index",y="Log enrichment index")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"),legend.position="none")
+EI
+
+SI<- ggplot(zy,aes(x=SI_MOL,y=SI_MOR))+ylim(0,110)+
+  geom_point(aes(fill = systems,color = systems), size = 3, shape = 21)+
+  scale_fill_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+
+  scale_color_manual(values = c("#d95f02", "#7570b3","#1b9e77"))+ 
+  geom_smooth(method = lm, data=zy, formula = y ~ poly(x, 1), se = T,size=1.2,color="black")+ 
+  stat_poly_eq(aes(label =  paste(after_stat(rr.label),
+                                  after_stat(p.value.label),
+                                  sep = "*\", \"*")),formula = y ~ poly(x, 1), 
+               parse = TRUE,label.x =0.1,label.y = 0.98,
+               size=5,p.digits = 2,data=zy)+
+  labs(x=" Structure index",y="Structure index")+
+  theme_bw()+theme(axis.text.x=element_text(size=rel(1.3)),axis.text.y=element_text(size=rel(1.3)),
+                   axis.title.x =element_text(size=rel(1.3)),axis.title.y =element_text(size=rel(1.3)),
+                   text=element_text(face="bold"),legend.position="none")
+SI
+
+
+metadata <- nema_ba+nema_fu+nema_he+nema_op+genus_richenss+
+  shannon+MI+EI+SI+plot_layout(nrow=3)#mantel_similarity+
+metadata
+
+
+topptx(metadata,width=10, height= 10,"E:/r/meta/fig/metadata-cor.pptx")
+
+
+
+#####################################################################################
+###fig s2
+####Correlation between nematode variables and community composition inferred from morphological traits and molecular datasets generated by different bioinformatic pipelines.
+setwd("E:/r/meta/otu-asv-97-99")
+zy <- read.csv("asv-otu-99-97.csv",header=TRUE,row.names = 1)
+
+
+library(ggplot2)
+library(ggpmisc)
+library(tidyr)
+library(dplyr)
+library(viridis)
+library(forcats)
+####bacterivores
+my_colors <- c("Bacterivores_asv" = "#FF8C42",  
+               "Bacterivores99"   = "#3D348B",  
+               "Bacterivores97"   = "#007F5F")  
+
+
+zy_long <- zy %>%
+  pivot_longer(cols = c(Bacterivores_asv, Bacterivores99, Bacterivores97),
+               names_to = "Bacterivores_type",
+               values_to = "Bacterivores_value") %>%
+  mutate(Bacterivores_type = fct_relevel(Bacterivores_type,
+                                         "Bacterivores_asv", "Bacterivores99", "Bacterivores97"))
+
+nema_ba <- ggplot(zy_long, aes(x = log(Bacterivores_value), y = log(ra_ba_mor), color = Bacterivores_type, group = Bacterivores_type)) +
+  geom_point(size = 3) +
+  geom_smooth(method = lm, formula = y ~ poly(x, 1), se = TRUE, size = 1.2) +
+  stat_poly_eq(
+    aes(label = paste(after_stat(rr.label), after_stat(p.value.label), sep = "*\", \"*")),
+    formula = y ~ poly(x, 1),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = c(0.95, 0.85, 0.75), 
+    size = 5
+  ) +
+  labs(x = "RA of bacterivores (%)", y = "RA of bacterivores (%)") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold"),legend.position="none"
+  ) +scale_color_manual(values = my_colors)
+
+nema_ba
+
+####fungivores
+my_colors <- c("Fungivores_asv" = "#FF8C42",  
+               "Fungivores99"   = "#3D348B",  
+               "Fungivores97"   = "#007F5F")  
+
+
+zy_long <- zy %>%
+  pivot_longer(
+    cols = c(Fungivores_asv, Fungivores99, Fungivores97),
+    names_to = "Fungivores_type",
+    values_to = "Fungivores_value"
+  ) %>%
+  mutate(Fungivores_type = fct_relevel(Fungivores_type,
+                                       "Fungivores_asv", "Fungivores99", "Fungivores97"))
+
+nema_fu <- ggplot(zy_long, aes(x = log(Fungivores_value), y = log(ra_fu_mor), 
+                               color = Fungivores_type, group = Fungivores_type)) +
+  geom_point(size = 3) +
+  geom_smooth(method = lm, formula = y ~ poly(x, 1), se = TRUE, size = 1.2) +
+  stat_poly_eq(
+    aes(label = paste(after_stat(rr.label), after_stat(p.value.label), sep = "*\", \"*")),
+    formula = y ~ poly(x, 1),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = c(0.95, 0.85, 0.75), 
+    size = 5
+  ) +
+  labs(x = "RA of fungivores (%)", y = "RA of fungivores (%)") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold"),legend.position="none"
+  ) +scale_color_manual(values = my_colors)
+
+nema_fu
+
+####herbivores
+my_colors <- c("Herbivores_asv" = "#FF8C42",  
+               "Herbivores99"   = "#3D348B",  
+               "Herbivores97"   = "#007F5F")  
+
+
+zy_long <- zy %>%
+  pivot_longer(cols = c(Herbivores_asv, Herbivores99, Herbivores97),
+               names_to = "Herbivores_type",
+               values_to = "Herbivores_value")%>%
+  mutate(Herbivores_type = fct_relevel(Herbivores_type,
+                                       "Herbivores_asv", "Herbivores99", "Herbivores97"))
+
+nema_he <- ggplot(zy_long, aes(x = log(Herbivores_value), y = log(ra_he_mor), 
+                               color = Herbivores_type, group = Herbivores_type)) +
+  geom_point(size = 3) +
+  geom_smooth(method = lm, formula = y ~ poly(x, 1), se = TRUE, size = 1.2) +
+  stat_poly_eq(
+    aes(label = paste(after_stat(rr.label), after_stat(p.value.label), sep = "*\", \"*")),
+    formula = y ~ poly(x, 1),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = c(0.95, 0.85, 0.75), 
+    size = 5
+  ) +
+  labs(x = "RA of herbivores (%)", y = "RA of herbivores (%)") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold"),legend.position="none"
+  ) +scale_color_manual(values = my_colors)
+
+nema_he
+
+
+
+####omnivores-predators
+my_colors <- c("op_asv" = "#FF8C42",  
+               "op99"   = "#3D348B", 
+               "op97"   = "#007F5F")  
+
+
+zy_long <- zy %>%
+  pivot_longer(cols = c(op_asv, op99, op97),
+               names_to = "op_type",
+               values_to = "op_value")%>%
+  mutate(op_type = fct_relevel(op_type,
+                               "op_asv", "op99", "op97"))
+
+nema_op <- ggplot(zy_long, aes(x = log(op_value), y = log(ra_op_mor), 
+                               color = op_type, group = op_type)) +
+  geom_point(size = 3) +
+  geom_smooth(method = lm, formula = y ~ poly(x, 1), se = TRUE, size = 1.2) +
+  stat_poly_eq(
+    aes(label = paste(after_stat(rr.label), after_stat(p.value.label), sep = "*\", \"*")),
+    formula = y ~ poly(x, 1),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = c(0.95, 0.85, 0.75), 
+    size = 5
+  ) +
+  labs(x = "RA of omnivores-predators (%)", y = "RA of omnivores-predators (%)") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold"),legend.position="none"
+  ) +scale_color_manual(values = my_colors)
+
+nema_op
+
+
+####genus richness
+my_colors <- c("genusasv_richness" = "#FF8C42",  
+               "genus99_richness"   = "#3D348B",  
+               "genus97_richness"   = "#007F5F")  
+
+
+zy_long <- zy %>%
+  pivot_longer(cols = c(genusasv_richness, genus99_richness, genus97_richness),
+               names_to = "genus_type",
+               values_to = "genus_value")%>%
+  mutate(genus_type = fct_relevel(genus_type,
+                                  "genusasv_richness", "genus99_richness", "genus97_richness"))
+
+nema_genus <- ggplot(zy_long, aes(x = log(genus_value), y = log(genus_richness_mor), 
+                                  color = genus_type, group = genus_type)) +
+  geom_point(size = 3) +
+  #geom_smooth(method = lm, formula = y ~ poly(x, 1), se = TRUE, size = 1.2) +
+  stat_poly_eq(
+    aes(label = paste(after_stat(rr.label), after_stat(p.value.label), sep = "*\", \"*")),
+    formula = y ~ poly(x, 1),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = c(0.95, 0.85, 0.75), 
+    size = 5
+  ) +
+  labs(x = "Genus richness", y = "Genus richness") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold"),legend.position="none"
+  ) +scale_color_manual(values = my_colors)
+
+nema_genus
+
+
+
+
+
+####shannon
+my_colors <- c("shannon_index_ASV" = "#FF8C42",  
+               "shannon_index_99"   = "#3D348B",  
+               "shannon_index_97"   = "#007F5F")  
+
+
+zy_long <- zy %>%
+  pivot_longer(cols = c(shannon_index_ASV, shannon_index_99, shannon_index_97),
+               names_to = "shannon_type",
+               values_to = "shannon_value")%>%
+  mutate(shannon_type = fct_relevel(shannon_type,
+                                    "shannon_index_ASV", "shannon_index_99", "shannon_index_97"))
+
+nema_shannon<- ggplot(zy_long, aes(x = log(shannon_value), y = log(shannon_mor), 
+                                   color = shannon_type, group = shannon_type)) +
+  geom_point(size = 3) +ylim(0.5,1.2)+
+  geom_smooth(method = lm, formula = y ~ poly(x, 1), se = TRUE, size = 1.2) +
+  stat_poly_eq(
+    aes(label = paste(after_stat(rr.label), after_stat(p.value.label), sep = "*\", \"*")),
+    formula = y ~ poly(x, 1),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = c(0.95, 0.85, 0.75), 
+    size = 5
+  ) +
+  labs(x = "Shannon index", y = "Shannon index") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold"),legend.position="none"
+  ) +scale_color_manual(values = my_colors)
+
+nema_shannon
+
+
+
+####evenness
+my_colors <- c("pielou_ASV" = "#FF8C42",  
+               "pielou_99"   = "#3D348B",  
+               "pielou_97"   = "#007F5F")  
+
+
+zy_long <- zy %>%
+  pivot_longer(cols = c(pielou_ASV, pielou_99, pielou_97),
+               names_to = "pielou_type",
+               values_to = "pielou_value")%>%
+  mutate(pielou_type = fct_relevel(pielou_type,
+                                   "pielou_ASV", "pielou_99", "pielou_97"))
+
+nema_evenness<- ggplot(zy_long, aes(x = log(pielou_value), y = log(Pielou_mor), 
+                                    color = pielou_type, group = pielou_type)) +
+  geom_point(size = 3) +ylim(-0.65,-0.1)+
+  geom_smooth(method = lm, formula = y ~ poly(x, 1), se = TRUE, size = 1.2) +
+  stat_poly_eq(
+    aes(label = paste(after_stat(rr.label), after_stat(p.value.label), sep = "*\", \"*")),
+    formula = y ~ poly(x, 1),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = c(0.95, 0.85, 0.75), 
+    size = 5
+  ) +
+  labs(x = "Evenness index", y = "Evenness index") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold"),legend.position="none"
+  ) +scale_color_manual(values = my_colors)
+
+nema_evenness
+
+
+####MI
+my_colors <- c("MI_asv" = "#FF8C42",  
+               "MI99"   = "#3D348B",  
+               "MI97"   = "#007F5F")  
+
+
+zy_long <- zy %>%
+  pivot_longer(cols = c(MI_asv, MI99, MI97),
+               names_to = "MI_type",
+               values_to = "MI_value")%>%
+  mutate(MI_type = fct_relevel(MI_type,
+                               "MI_asv", "MI99", "MI97"))
+
+mi<- ggplot(zy_long, aes(x = log(MI_value), y = log(MI_MOR), 
+                         color = MI_type, group = MI_type)) +
+  geom_point(size = 3) +ylim(0.5,1.1)+
+  geom_smooth(method = lm, formula = y ~ poly(x, 1), se = TRUE, size = 1.2) +
+  stat_poly_eq(
+    aes(label = paste(after_stat(rr.label), after_stat(p.value.label), sep = "*\", \"*")),
+    formula = y ~ poly(x, 1),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = c(0.95, 0.85, 0.75), 
+    size = 5
+  ) +
+  labs(x = "Maturity index", y = "Maturity index") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold"),legend.position="none"
+  ) +scale_color_manual(values = my_colors)
+
+mi
+
+
+####EI
+my_colors <- c("EI_asv" = "#FF8C42",  
+               "EI99"   = "#3D348B",  
+               "EI97"   = "#007F5F") 
+
+
+zy_long <- zy %>%
+  pivot_longer(cols = c(EI_asv, EI99, EI97),
+               names_to = "EI_type",
+               values_to = "EI_value")%>%
+  mutate(EI_type = fct_relevel(EI_type,
+                               "EI_asv", "EI99", "EI97"))
+
+ei<- ggplot(zy_long, aes(x = log(EI_value), y = log(EI_MOR), 
+                         color = EI_type, group = EI_type)) +
+  geom_point(size = 3) +ylim(3.3,4.5)+
+  # geom_smooth(method = lm, formula = y ~ poly(x, 1), se = TRUE, size = 1.2) +
+  stat_poly_eq(
+    aes(label = paste(after_stat(rr.label), after_stat(p.value.label), sep = "*\", \"*")),
+    formula = y ~ poly(x, 1),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = c(0.95, 0.85, 0.75), 
+    size = 5
+  ) +
+  labs(x = "Enrichment index", y = "Enrichment index") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold"),legend.position="none"
+  ) +scale_color_manual(values = my_colors)
+
+ei
+
+####SI
+my_colors <- c("SI_asv" = "#FF8C42",  
+               "SI99"   = "#3D348B",  
+               "SI97"   = "#007F5F")  
+
+
+zy_long <- zy %>%
+  pivot_longer(cols = c(SI_asv, SI99, SI97),
+               names_to = "SI_type",
+               values_to = "SI_value")%>%
+  mutate(SI_type = fct_relevel(SI_type,
+                               "SI_asv", "SI99", "SI97"))
+
+si<- ggplot(zy_long, aes(x = log(SI_value), y = log(SI_MOR), 
+                         color = SI_type, group = SI_type)) +
+  geom_point(size = 3) +ylim(2.5,4.5)+
+  geom_smooth(method = lm, formula = y ~ poly(x, 1), se = TRUE, size = 1.2) +
+  stat_poly_eq(
+    aes(label = paste(after_stat(rr.label), after_stat(p.value.label), sep = "*\", \"*")),
+    formula = y ~ poly(x, 1),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = c(0.95, 0.85, 0.75), 
+    size = 5
+  ) +
+  labs(x = "Structure index", y = "Structure index") +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold"),legend.position="none"
+  ) +scale_color_manual(values = my_colors)
+
+si
+
+mor_community1 <- read.csv("my_data_mor.csv",header=TRUE)
+
+
+mor_community <- mor_community1[,-c(0:9)]
+mor_community
+
+otu97_community <-read.csv("otu97-table.csv",header = T,row.names = 1) 
+asv_community <-read.csv("asv-table-t.csv",header = T,row.names = 1) 
+otu99_community <-read.csv("otu99-rare.csv",header = T,row.names = 1) 
+
+#otu_community <- t(otu_community1[,-c(1:4)])
+#asv_community <- t(asv_community1[,-c(1:4)])
+#  Bray-Curtis 
+otu97_dist <- vegdist(otu97_community, method = "bray")
+otu99_dist <- vegdist(otu99_community, method = "bray")
+asv_dist <- vegdist(asv_community, method = "bray")   
+mor_dist <- vegdist(mor_community, method = "bray")  
+
+otu97_sim <- 1 - as.matrix(otu97_dist)
+otu99_sim <- 1 - as.matrix(otu99_dist)
+asv_sim   <- 1 - as.matrix(asv_dist)
+mor_sim   <- 1 - as.matrix(mor_dist)
+
+#  Mantel test
+mantel_result_99_asv <- mantel(otu99_dist, asv_dist, method = "pearson", permutations = 999)
+mantel_result_97_asv <- mantel(otu97_dist, asv_dist, method = "pearson", permutations = 999)
+mantel_result_99_97 <- mantel(otu99_dist, otu97_dist, method = "pearson", permutations = 999)
+mantel_result_mor_97 <- mantel(mor_dist, otu97_dist, method = "pearson", permutations = 999)
+
+
+# print Mantel results
+print(mantel_result_99_asv)
+print(mantel_result_97_asv)
+print(mantel_result_99_97)
+print(mantel_result_mor_97)
+
+# Combine pairwise similarity/distance matrices into a single data frame
+mantel_data <- data.frame(
+  Distance_otu97 = as.vector(otu97_sim),  # Bray-Curtis similarity/distance for OTU97
+  Distance_otu99 = as.vector(otu99_sim),  # Bray-Curtis similarity/distance for OTU99
+  Distance_asv   = as.vector(asv_sim),    # Bray-Curtis similarity/distance for ASVs
+  Distance_mor   = as.vector(mor_sim)     # Bray-Curtis similarity/distance for morphological data
+)
+
+my_colors <- c("Distance_asv" = "#FF8C42",  
+               "Distance_otu99"   = "#3D348B",  
+               "Distance_otu97"   = "#007F5F")  
+
+
+zy_long <- mantel_data %>%
+  pivot_longer(cols = c(Distance_asv, Distance_otu99, Distance_otu97),
+               names_to = "distance_type",
+               values_to = "distance_value")%>%
+  mutate(distance_type = fct_relevel(distance_type,
+                                     "Distance_asv", "Distance_otu99", "Distance_otu97"))
+
+
+
+
+mantel <- ggplot(zy_long, aes(x = distance_value, 
+                              y = Distance_mor, 
+                              color = distance_type, 
+                              group = distance_type)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "lm", se = FALSE, size = 1.2, formula = 'y ~ x') +
+  labs(
+    x = "Bray-Curtis Similarity of nematode composition",
+    y = "Bray-Curtis Similarity of nematode composition"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(size = rel(1.3)),
+    axis.text.y = element_text(size = rel(1.3)),
+    axis.title.x = element_text(size = rel(1.3)),
+    axis.title.y = element_text(size = rel(1.3)),
+    text = element_text(face = "bold"),legend.position="none"
+  ) +
+  scale_color_manual(values = my_colors)
+
+mantel
+
+
+threshold <- nema_ba+nema_fu+nema_he+nema_op+nema_genus+
+  nema_shannon+nema_evenness+mi+ei+si+plot_layout(nrow=4)#mantel_similarity+
+threshold
+
+topptx(threshold,width=10, height= 12,"E:/r/meta/fig/mydata-fig-different-threshold.pptx")
+topptx(mantel,width=6.5, height= 3,"E:/r/meta/fig/mantel-different-threshold.pptx")
+
+
+
+#######################################################################################
+#####Table S3 +moderater
+#####omnibus tests (QM) for moderators
+setwd("E:/r/meta")
+data<-read.csv("abundance.csv",header = T,row.names = 1)
+
+
+##bacterivores
+dat <- escalc(measure = "ROM",  
+              m1i = bacterivores_mol, sd1i = b.sd_mol, n1i = nnn,  
+              m2i = bacterivores_mor, sd2i = b_mor_sd, n2i = nnn,  
+              data = data)
+dat
+
+dat <- cbind(data,dat)
+
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID,mods = ~systems+primer,
+                method = "REML",
+                data = dat)
+
+summary(model)
+
+
+
+###fungivores
+dat <- escalc(measure = "ROM", 
+              m1i = fungivores_mol, sd1i = f.sd_mol, n1i = nnn,  
+              m2i = fungivores_mor, sd2i = f_mor_sd, n2i = nnn,  
+              data = data)
+dat
+
+dat <- cbind(data,dat)
+
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID,mods = ~systems+primer,
+                method = "REML", data = dat)
+
+summary(model)
+
+
+
+
+###herbivores
+dat <- escalc(measure = "ROM",  
+              m1i = herbivores_mol, sd1i = h.sd_mol, n1i = nnn,  
+              m2i = herbivores_mor, sd2i = h_mor_sd, n2i = nnn,  
+              data = data)
+
+
+dat <- cbind(data,dat)
+
+model <- rma.mv(yi, vi,random = ~ 1 | studyID/observationID,mods = ~systems+primer,
+                method = "REML", data = dat)
+
+summary(model)
+
+
+
+
+
+###omnivores-predators
+dat <- escalc(measure = "ROM",  
+              m1i = op_mol, sd1i = op.sd_mol, n1i = nnn,  
+              m2i = op_mor, sd2i = op_mor_sd, n2i = nnn,  
+              data = data)
+
+
+dat <- cbind(data,dat)
+
+model <- rma.mv(yi, vi,random = ~ 1 | studyID/observationID,mods = ~systems+primer,
+                method = "REML", data = dat)
+
+summary(model)
+
+
+
+setwd("E:/r/meta")
+data<-read.csv("index.csv",header = T,row.names = 1)
+
+###genus richness
+dat1 <- escalc(measure = "ROM",  
+               m1i = richness_mol_genera, sd1i = richnes_mol_genera.sd, n1i = nnn,  
+               m2i = richness_mor_genera, sd2i = richness_mor_genera.sd, n2i = nnn, 
+               data = data)
+dat1
+
+# remove NA values
+dat_clean <- dat1[complete.cases(dat1$yi, dat1$vi), ]
+model <- rma.mv(yi, vi, random = ~ 1 |studyID/observationID,mods = ~systems+primer,
+                method = "REML", data = dat_clean)
+
+summary(model)
+
+
+
+
+###shannon
+dat2 <- escalc(measure = "ROM",  
+               m1i = mol_Shannon, sd1i = mol_Shannon.sd, n1i = nnn, 
+               m2i = mor_Shannon, sd2i = mor_Shannon.sd, n2i = nnn,  
+               data = data)
+dat2
+
+
+
+
+# remove NA values
+dat_clean <- dat2[complete.cases(dat2$yi, dat2$vi) & dat2$vi > 0, ]
+table(dat_clean$studyID)
+table(dat_clean$system)
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID,mods = ~systems+primer,
+                method = "REML", data = dat_clean)
+
+summary(model)
+
+
+
+setwd("E:/r/meta")
+data<-read.csv("eisi.csv",header = T,row.names = 1)
+
+names(data)
+
+###maturity index
+dat <- escalc(measure = "ROM",  
+              m1i = MI_MOL, sd1i = MI_MOL.sd, n1i = nnn,  
+              m2i = MI_MOR, sd2i = MI_MOR.sd, n2i = nnn,  
+              data = data)
+dat
+
+#remove NA values
+dat_clean <- dat[complete.cases(dat$yi, dat$vi), ]
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID,mods = ~systems+primer,
+                method = "REML", data = dat_clean)
+
+summary(model)
+
+
+###enrichment
+dat3 <- escalc(measure = "ROM",   
+               m1i = EI_MOL, sd1i = EI_MOL.sd, n1i = nnn,  
+               m2i = EI_MOR, sd2i = EI_MOR.sd, n2i = nnn,  
+               data = data)
+dat3
+
+# remove NA values
+dat_clean <- dat3[complete.cases(dat3$yi, dat3$vi), ]
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID,mods = ~systems,#+
+                method = "REML", data = dat_clean)
+
+summary(model)
+
+
+###structure index
+dat3 <- escalc(measure = "ROM",  
+               m1i = SI_MOL, sd1i = SI_MOL.sd, n1i = nnn,  
+               m2i = SI_MOR, sd2i = SI_MOR.sd, n2i = nnn,  
+               data = data)
+dat3
+
+# remove NA values
+dat_clean <- dat3[complete.cases(dat3$yi, dat3$vi), ]
+model <- rma.mv(yi, vi, random = ~ 1 | studyID/observationID,mods = ~systems+primer,
+                method = "REML", data = dat_clean)
+
+summary(model)
+
+
+
+

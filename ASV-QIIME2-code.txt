@@ -1,0 +1,106 @@
+QIIME2 operational workflow
+（ASV）
+
+# Activate QIIME2 environment using conda
+conda activate qiime2-amplicon-2023.9
+
+# Set working directory
+cd /home/lab324/Documents/zyl
+
+# Import paired-end sequences
+time qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path zyl_duble.tsv \
+  --output-path paired-end-demux.qza \
+  --input-format PairedEndFastqManifestPhred33
+
+# Generate summary report for imported sequences
+qiime demux summarize \
+  --i-data paired-end-demux.qza \
+  --o-visualization paired-end-demux.qzv
+qiime tools view paired-end-demux.qzv
+
+# Remove primers using cutadapt
+qiime cutadapt trim-paired \
+--i-demultiplexed-sequences paired-end-demux.qza \
+--p-cores 8 \
+--p-front-f GGTGGTGCATGGCCGTTCTTAGTT \
+--p-front-r TACAAAGGGCAGGGACGTAAT \
+--o-trimmed-sequences trimmed-seqs.qza \
+--verbose
+
+# Denoising with DADA2
+ time qiime dada2 denoise-paired \
+   --i-demultiplexed-seqs trimmed-seqs.qza \
+   --p-trim-left-f 0 \
+   --p-trim-left-r 0 \
+   --p-trunc-len-f 250 \
+   --p-trunc-len-r 250 \
+   --p-max-ee-r 2\
+   --p-max-ee-f 2\
+   --p-n-threads 5 \
+   --o-table rep-table-dada2.qza \
+   --o-representative-sequences rep-seqs-dada2.qza \
+   --o-denoising-stats denoising-stats-dada2.qza \
+   --verbose
+
+# View denoising statistics
+qiime metadata tabulate \
+  --m-input-file denoising-stats-dada2.qza \
+  --o-visualization denoising-stats-dada2.qzv 
+qiime tools view denoising-stats-dada2.qzv
+
+# View feature table summary
+qiime metadata tabulate \
+  --m-input-file rep-table-dada2.qza \
+  --o-visualization rep-table-dada2.qzv
+qiime tools view rep-table-dada2.qzv
+
+# Train classifier on PR2 database
+qiime feature-classifier extract-reads \
+ --i-sequences pr2_seq.qza \
+ --p-f-primer GGTGGTGCATGGCCGTTCTTAGTT \
+ --p-r-primer TACAAAGGGCAGGGACGTAAT \
+ --p-trunc-len 300 \
+ --p-min-length 200 \
+ --p-max-length 650 \
+ --o-reads pr-primer-ref-sequences.qza
+
+qiime feature-classifier fit-classifier-naive-bayes  
+  --i-reference-reads pr-primer-ref-sequences.qza \
+  --i-reference-taxonomy pr2_tax.qza\
+  --o-classifier pr2-nb-classifier_primer.qza
+
+# Taxonomic annotation
+qiime feature-classifier classify-sklearn \
+  --i-classifier pr2-nb-classifier_primer.qza \
+  --i-reads rep-seqs-dada2.qza \
+  --p-read-orientation same \
+  --o-classification rep-seqs-asv.qza \
+  --verbose
+
+# Transpose feature table and create visualization with taxonomy and sequences
+qiime feature-table transpose \
+--i-table rep-table-dada2.qza \
+--o-transposed-feature-table rep-table-dada2-tansposed.qza
+qiime metadata tabulate \
+--m-input-file rep-seqs-asv.qza \
+--m-input-file rep-table-dada2-tansposed.qza \
+--m-input-file rep-seqs-dada2.qza \
+--o-visualization rep-table-tansposed_with_taxon_seqs_dada2.qzv
+qiime tools view rep-table-tansposed_with_taxon_seqs_dada2.qzv
+
+# Export the transposed table and filter out non-nematode sequences, then convert to FASTA format
+# Import nematode-only sequences 
+qiime tools import --type FeatureData[Sequence] 
+  --input-path only-nematode-asv.fasta \
+  --output-path only_nema_seqs.qza
+
+# Re-annotate nematode sequences
+qiime feature-classifier classify-sklearn \
+  --i-classifier 18snemabase-nb-classifier_primer-nf1.qza \
+  --i-reads only_nema_seqs.qza \
+  --p-read-orientation same \
+  --o-classification rep-seqs-taxon_only_nema.qza \
+  --verbose
+

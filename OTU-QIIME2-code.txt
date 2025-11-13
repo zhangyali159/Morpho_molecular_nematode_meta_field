@@ -1,0 +1,159 @@
+QIIME2 operational workflow（OTU）
+
+# Activate QIIME2 environment using conda
+conda activate qiime2-amplicon-2023.9
+
+# Set working directory
+cd /home/lab324/Documents/zyl
+
+# Import paired-end sequences
+time qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path zyl_duble.tsv \
+  --output-path paired-end-demux.qza \
+  --input-format PairedEndFastqManifestPhred33
+
+
+# Remove primers using cutadapt
+qiime cutadapt trim-paired \
+--i-demultiplexed-sequences paired-end-demux.qza \
+--p-cores 8 \
+--p-front-f GGTGGTGCATGGCCGTTCTTAGTT \
+--p-front-r TACAAAGGGCAGGGACGTAAT \
+--o-trimmed-sequences trimmed-seqs.qza  \
+--verbose
+
+# Quality filtering based on Q-scores
+qiime quality-filter q-score \
+  --i-demux trimmed-seqs.qza \
+  --p-min-quality 20 \
+  --o-filtered-sequences trimmed-seqs-joined-Qscore-filter.qza \
+  --o-filter-stats trimmed-seqs-joined-Qscore-filter-stats.qza
+
+
+# Visualize quality filtering results
+qiime demux summarize \
+  --i-data trimmed-seqs-joined-Qscore-filter.qza \
+  --o-visualization trimmed-seqs-joined-Qscore-filter.qzv
+qiime tools view trimmed-seqs-joined-Qscore-filter.qzv
+
+# View quality filtering statistics
+qiime metadata tabulate \
+  --m-input-file trimmed-seqs-joined-Qscore-filter-stats.qza \
+  --o-visualization trimmed-seqs-joined-Qscore-filter-stats.qzv
+qiime tools view trimmed-seqs-joined-Qscore-filter-stats.qzv
+
+# Dereplicate sequences
+qiime vsearch dereplicate-sequences \
+    --i-sequences trimmed-seqs-joined-Qscore-filter.qza \
+    --o-dereplicated-table rep-table-dereplicate.qza \
+    --o-dereplicated-sequences rep-seqs-dereplicate.qza \
+    --verbose
+
+# De novo OTU clustering at 97%/99% similarity
+# The following example demonstrates clustering at 99% similarity
+#The same workflow can be applied for 97% similarity by changing the parameter
+qiime vsearch cluster-features-de-novo   \
+--i-table rep-table-dereplicate.qza \
+--i-sequences rep-seqs-dereplicate.qza \
+--p-perc-identity 0.99 \
+--o-clustered-table rep-table-OTU-0.99-de-novo.qza \
+--o-clustered-sequences rep-seqs-OTU-0.99-de-novo.qza \
+--verbose
+
+# Chimera detection
+qiime vsearch uchime-denovo \
+--i-table rep-table-OTU-0.99-de-novo.qza \
+--i-sequences rep-seqs-OTU-0.99-de-novo.qza \
+--o-chimeras chimeras-rep-seqs-OTU-0.99-de-novo.qza \
+--o-nonchimeras nonchimeras-rep-seqs-OTU-0.99-de-novo.qza \
+--o-stats OTU-0.99-chimeras-states-de-novo.qza \
+--verbose
+
+
+# Filter out chimeras from feature table and sequences
+qiime feature-table filter-features \
+  --i-table rep-table-OTU-0.99-de-novo.qza \
+  --m-metadata-file nonchimeras-rep-seqs-OTU-0.99-de-novo.qza \
+  --o-filtered-table rep-table-OTU-0.99-denovo.qza
+qiime feature-table filter-seqs \
+  --i-data rep-seqs-OTU-0.99-de-novo.qza \
+  --m-metadata-file nonchimeras-rep-seqs-OTU-0.99-de-novo.qza \
+  --o-filtered-data rep-seqs-OTU-0.99-denovo.qza
+
+# Visualize OTU clustering results
+qiime feature-table tabulate-seqs \
+--i-data rep-seqs-OTU-0.99-denovo.qza \
+--o-visualization rep-seqs-OTU-0.99-denovo.qzv
+qiime tools view rep-seqs-OTU-0.99-denovo.qzv
+
+# Export OTU feature table
+qiime metadata tabulate \
+  --m-input-file rep-table-OTU-0.99-denovo.qza \
+  --o-visualization rep-table-OTU-0.99-denovo.qzv
+qiime tools view rep-table-OTU-0.99-denovo.qzv
+
+
+# Taxonomic annotation
+#We first used the previously trained PR2 classifier for taxonomic classification
+qiime feature-classifier classify-sklearn \
+  --i-classifier pr2-nb-classifier_primer.qza \
+  --i-reads rep-seqs-OTU-0.99-denovo.qza \
+  --p-read-orientation same \
+  --o-classification rep-seqs-pr.qza \
+  --verbose
+
+
+# Transpose feature table and create visualization with taxonomy and sequences
+qiime feature-table transpose \
+  --i-table rep-table-OTU-0.99-denovo.qza \
+  --o-transposed-feature-table rep-table-OTU-99-denovo-tansposed.qza
+
+qiime metadata tabulate \
+--m-input-file rep-seqs-pr.qza \
+--m-input-file rep-table-OTU-99-denovo-tansposed.qza \
+--m-input-file rep-seqs-OTU-0.99-denovo.qza \
+ --o-visualization rep-table-tansposed_OTU99.qzv
+
+
+# Export the transposed table and filter out non-nematode sequences, then convert to FASTA format
+# Import nematode-only sequences 
+qiime tools import
+ --type FeatureData[Sequence] 
+--input-path only-nematode99.fasta 
+--output-path only_nema_seqs99.qza
+
+# Re-annotate nematode sequences
+qiime feature-classifier classify-sklearn \
+  --i-classifier 18snemabase-nb-classifier_primer-nf1.qza \
+  --i-reads only_nema_seqs99.qza \
+  --p-read-orientation same \
+  --o-classification rep-seqs-taxon_only_nema99.qza \
+  --verbose
+
+qiime metadata tabulate
+  --m-input-file rep-seqs-taxon_only_nema99.qza
+  --o-visualization rep-seqs-taxon_only_nema99.qzv
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
